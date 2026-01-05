@@ -1,11 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
-import {
-  getAuth,
-  signInAnonymously,
-  onAuthStateChanged,
-  signInWithCustomToken,
-} from "firebase/auth";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import {
   getFirestore,
   collection,
@@ -14,10 +9,7 @@ import {
   doc,
   updateDoc,
   deleteDoc,
-  query,
-  orderBy,
   serverTimestamp,
-  getDoc,
 } from "firebase/firestore";
 import {
   Plus,
@@ -37,28 +29,54 @@ import {
   Image as ImageIcon,
   Camera,
   Lock,
-  Unlock,
   LogOut,
   ZoomIn,
   ZoomOut,
   Maximize2,
   Filter,
-  Zap,
-  Box,
   Pencil,
+  Box,
 } from "lucide-react";
 
-/* * FIREBASE CONFIGURATION & INITIALIZATION */
-// --- START: REPLACEMENT SECTION FOR DEPLOYMENT ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-// --- END: REPLACEMENT SECTION ---
+/* --- 1. CONFIGURATION --- */
+const firebaseConfig = {
+  apiKey: "AIzaSyBDgicMLfNge706bPkYcRnJ2EiZW94OtLg",
+  authDomain: "qr-inventory-483201.firebaseapp.com",
+  projectId: "qr-inventory-483201",
+  storageBucket: "qr-inventory-483201.firebasestorage.app",
+  messagingSenderId: "606828640004",
+  appId: "1:606828640004:web:ca9157a8070c352836c251",
+  measurementId: "G-YJKTR537WT",
+};
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+/* --- 2. INITIALIZE FIREBASE (Lazy) --- */
+let app, auth, db;
+let firebaseInitPromise = null;
 
-/* * HELPER: Random Color Generator (STRICTLY BLUE/CYAN/TEAL - NO PURPLE) */
+const initFirebase = () => {
+  if (firebaseInitPromise) return firebaseInitPromise;
+
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("Cannot initialize Firebase on server"));
+  }
+
+  firebaseInitPromise = new Promise((resolve, reject) => {
+    try {
+      app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      db = getFirestore(app);
+      console.log("Firebase initialized successfully");
+      resolve({ app, auth, db });
+    } catch (error) {
+      console.error("Firebase Initialization Error:", error);
+      reject(error);
+    }
+  });
+
+  return firebaseInitPromise;
+};
+
+/* --- 3. HELPER FUNCTIONS --- */
 const getRandomGradient = (id) => {
   const gradients = [
     "bg-gradient-to-br from-cyan-500 to-blue-600",
@@ -67,13 +85,13 @@ const getRandomGradient = (id) => {
     "bg-gradient-to-br from-teal-500 to-blue-600",
     "bg-gradient-to-br from-blue-600 to-slate-600",
   ];
+  if (!id) return gradients[0];
   const index =
     id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0) %
     gradients.length;
   return gradients[index];
 };
 
-/* * HELPER: Get Local Date String (YYYY-MM-DD) */
 const getLocalDate = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -82,7 +100,6 @@ const getLocalDate = () => {
   return `${year}-${month}-${day}`;
 };
 
-/* * HELPER: Format Date to dd/mm/yyyy */
 const formatDateDDMMYYYY = (dateString) => {
   if (!dateString) return "N/A";
   const parts = dateString.split("-");
@@ -96,7 +113,7 @@ const formatDateDDMMYYYY = (dateString) => {
   ).padStart(2, "0")}/${date.getFullYear()}`;
 };
 
-/* * COMPONENT: QR Code Generator */
+/* --- 4. COMPONENTS --- */
 const QRCodeSVG = ({ value, size = 128 }) => {
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(
     value
@@ -113,8 +130,8 @@ const QRCodeSVG = ({ value, size = 128 }) => {
   );
 };
 
-/* * MAIN APPLICATION COMPONENT */
-export default function InventoryApp() {
+/* --- 5. MAIN APP --- */
+function InventoryApp() {
   const [user, setUser] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -122,6 +139,8 @@ export default function InventoryApp() {
   const [branchFilter, setBranchFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [viewMode, setViewMode] = useState("list");
+  const [appError, setAppError] = useState(null);
+  const [firebaseReady, setFirebaseReady] = useState(false);
 
   // Auth & Permissions State
   const [isAdmin, setIsAdmin] = useState(false);
@@ -134,9 +153,7 @@ export default function InventoryApp() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedQRItem, setSelectedQRItem] = useState(null);
   const [selectedDetailItem, setSelectedDetailItem] = useState(null);
-
-  // Editing State
-  const [editingId, setEditingId] = useState(null); // ID of item being edited, null if adding new
+  const [editingId, setEditingId] = useState(null);
 
   // Image Zoom State
   const [isImageZoomOpen, setIsImageZoomOpen] = useState(false);
@@ -156,20 +173,6 @@ export default function InventoryApp() {
     dateRecorded: getLocalDate(),
     image: "",
   });
-
-  // Helper for input styling
-  const getInputClass = (value, isRequired = true) => {
-    const base =
-      "w-full px-4 py-3 border-2 rounded-xl outline-none font-bold transition-all";
-    if (!isRequired) {
-      return value
-        ? `${base} border-blue-500 focus:border-blue-600 bg-blue-50/10 text-slate-800`
-        : `${base} border-slate-200 focus:border-blue-500 bg-slate-50 text-slate-700`;
-    }
-    return value
-      ? `${base} border-blue-500 focus:border-blue-600 bg-blue-50/10 text-slate-800`
-      : `${base} border-red-300 focus:border-red-500 bg-red-50 text-slate-700 placeholder-red-300`;
-  };
 
   const BRANCH_OPTIONS = [
     "Head Office",
@@ -198,52 +201,91 @@ export default function InventoryApp() {
     "Switch / Router",
   ];
 
+  // Helper for input styling
+  const getInputClass = (value, isRequired = true) => {
+    const base =
+      "w-full px-4 py-3 border-2 rounded-xl outline-none font-bold transition-all";
+    if (!isRequired) {
+      return value
+        ? `${base} border-blue-500 focus:border-blue-600 bg-blue-50/10 text-slate-800`
+        : `${base} border-slate-200 focus:border-blue-500 bg-slate-50 text-slate-700`;
+    }
+    return value
+      ? `${base} border-blue-500 focus:border-blue-600 bg-blue-50/10 text-slate-800`
+      : `${base} border-red-300 focus:border-red-500 bg-red-50 text-slate-700 placeholder-red-300`;
+  };
+
+  /* --- INITIALIZE FIREBASE --- */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    initFirebase()
+      .then(() => {
+        setFirebaseReady(true);
+      })
+      .catch((error) => {
+        console.error("Firebase initialization failed:", error);
+        setAppError("Failed to initialize app: " + error.message);
+        setLoading(false);
+      });
+  }, []);
+
   /* --- AUTHENTICATION --- */
   useEffect(() => {
+    if (!firebaseReady || !auth) return;
+
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== "undefined" && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
+      try {
         await signInAnonymously(auth);
+      } catch (error) {
+        console.error("Auth Failed:", error);
+        setAppError("Authentication Failed: " + error.message);
       }
     };
+
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
     return () => unsubscribe();
-  }, []);
+  }, [firebaseReady]);
 
   /* --- DATA FETCHING --- */
   useEffect(() => {
-    if (!user) return;
+    if (!firebaseReady || !db) return;
 
-    const params = new URLSearchParams(window.location.search);
-    const idFromUrl = params.get("itemId");
-    if (idFromUrl) {
-      setScannedItemId(idFromUrl);
+    // Check URL parameters
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const idFromUrl = params.get("itemId");
+      if (idFromUrl) setScannedItemId(idFromUrl);
     }
 
-    const q = collection(db, "artifacts", appId, "public", "data", "inventory");
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const inventoryData = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        inventoryData.sort(
-          (a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)
-        );
-        setItems(inventoryData);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Error fetching inventory:", error);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [user]);
+    try {
+      const q = collection(db, "inventory");
+      const unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          const inventoryData = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          inventoryData.sort(
+            (a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)
+          );
+          setItems(inventoryData);
+          setLoading(false);
+        },
+        (error) => {
+          console.error("Firestore Error:", error);
+          setLoading(false);
+        }
+      );
+      return () => unsubscribe();
+    } catch (err) {
+      console.error("Setup Error:", err);
+      setAppError(err.message);
+      setLoading(false);
+    }
+  }, [firebaseReady]);
 
   /* --- ACTIONS --- */
   const handleLogin = (e) => {
@@ -259,9 +301,7 @@ export default function InventoryApp() {
     }
   };
 
-  const handleLogout = () => {
-    setIsAdmin(false);
-  };
+  const handleLogout = () => setIsAdmin(false);
 
   const openAddModal = () => {
     setEditingId(null);
@@ -295,8 +335,6 @@ export default function InventoryApp() {
 
   const handleSaveItem = async (e) => {
     e.preventDefault();
-
-    // Strict Validation
     if (
       !newItem.name ||
       !newItem.category ||
@@ -311,48 +349,21 @@ export default function InventoryApp() {
 
     try {
       if (editingId) {
-        // Update existing item
-        const itemRef = doc(
-          db,
-          "artifacts",
-          appId,
-          "public",
-          "data",
-          "inventory",
-          editingId
-        );
+        const itemRef = doc(db, "inventory", editingId);
         await updateDoc(itemRef, {
           ...newItem,
           quantity: Number(newItem.quantity),
-          // Don't update timestamp on edit to preserve sort order, or update it if you want it to jump to top
         });
       } else {
-        // Add new item
-        await addDoc(
-          collection(db, "artifacts", appId, "public", "data", "inventory"),
-          {
-            ...newItem,
-            quantity: Number(newItem.quantity),
-            timestamp: serverTimestamp(),
-          }
-        );
+        await addDoc(collection(db, "inventory"), {
+          ...newItem,
+          quantity: Number(newItem.quantity),
+          timestamp: serverTimestamp(),
+        });
       }
-
-      // Reset and Close
-      setNewItem({
-        name: "",
-        category: "",
-        quantity: "",
-        branch: "",
-        assignedUser: "",
-        dateBought: getLocalDate(),
-        dateRecorded: getLocalDate(),
-        image: "",
-      });
-      setEditingId(null);
       setIsAddModalOpen(false);
     } catch (error) {
-      console.error("Error saving item:", error);
+      alert("Error saving: " + error.message);
     }
   };
 
@@ -360,15 +371,11 @@ export default function InventoryApp() {
     const file = e.target.files[0];
     if (file) {
       if (file.size > 1048576) {
-        alert(
-          "File is too big! Please use an image smaller than 1MB (1024KB)."
-        );
+        alert("File too big (Max 1MB)");
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewItem({ ...newItem, image: reader.result });
-      };
+      reader.onloadend = () => setNewItem({ ...newItem, image: reader.result });
       reader.readAsDataURL(file);
     }
   };
@@ -376,39 +383,29 @@ export default function InventoryApp() {
   const updateQuantity = async (id, currentQty, change) => {
     if (!isAdmin) return;
     const newQty = Math.max(0, currentQty + change);
-    const itemRef = doc(
-      db,
-      "artifacts",
-      appId,
-      "public",
-      "data",
-      "inventory",
-      id
-    );
-    await updateDoc(itemRef, { quantity: newQty });
+    await updateDoc(doc(db, "inventory", id), { quantity: newQty });
   };
 
   const deleteItem = async (id) => {
     if (!isAdmin) return;
-    if (confirm("Are you sure you want to delete this item?")) {
-      await deleteDoc(
-        doc(db, "artifacts", appId, "public", "data", "inventory", id)
-      );
+    if (confirm("Delete this item?")) {
+      await deleteDoc(doc(db, "inventory", id));
       if (scannedItemId === id) setScannedItemId(null);
       if (selectedDetailItem?.id === id) setSelectedDetailItem(null);
     }
   };
 
   const getShareableUrl = (itemId) => {
+    if (typeof window === "undefined") return "";
     const baseUrl = window.location.href.split("?")[0];
     return `${baseUrl}?itemId=${itemId}`;
   };
 
-  const formatDate = (dateString) => formatDateDDMMYYYY(dateString);
-
   const clearScan = () => {
-    const newUrl = window.location.href.split("?")[0];
-    window.history.pushState({}, "", newUrl);
+    if (typeof window !== "undefined") {
+      const newUrl = window.location.href.split("?")[0];
+      window.history.pushState({}, "", newUrl);
+    }
     setScannedItemId(null);
   };
 
@@ -420,6 +417,26 @@ export default function InventoryApp() {
     setIsImageZoomOpen(false);
     setZoomLevel(1);
   };
+
+  // If there's a critical startup error, show it
+  if (appError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-red-50 p-4">
+        <div className="bg-white p-6 rounded-xl shadow-xl border-2 border-red-200 text-center">
+          <h1 className="text-xl font-bold text-red-600 mb-2">
+            Application Error
+          </h1>
+          <p className="text-slate-600 mb-4">{appError}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-red-600 text-white px-4 py-2 rounded-lg"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   /* --- UI RENDERING --- */
 
@@ -434,14 +451,14 @@ export default function InventoryApp() {
           {isAdmin ? (
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 text-xs font-bold bg-white text-rose-600 px-4 py-2 rounded-full shadow-lg hover:bg-rose-50 transition-all border border-rose-100"
+              className="flex items-center gap-2 text-xs font-bold bg-white text-rose-600 px-4 py-2 rounded-full shadow-lg border border-rose-100"
             >
               <LogOut className="w-4 h-4" /> Exit Admin
             </button>
           ) : (
             <button
               onClick={() => setIsLoginModalOpen(true)}
-              className="flex items-center gap-2 text-xs font-bold bg-white text-blue-600 px-4 py-2 rounded-full shadow-lg hover:bg-blue-50 transition-all border border-blue-100"
+              className="flex items-center gap-2 text-xs font-bold bg-white text-blue-600 px-4 py-2 rounded-full shadow-lg border border-blue-100"
             >
               <Lock className="w-4 h-4" /> Admin Access
             </button>
@@ -457,7 +474,7 @@ export default function InventoryApp() {
             </h2>
             <button
               onClick={clearScan}
-              className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition-colors backdrop-blur-md"
+              className="bg-white/20 hover:bg-white/30 p-2 rounded-full backdrop-blur-md"
             >
               <X className="w-5 h-5" />
             </button>
@@ -486,11 +503,10 @@ export default function InventoryApp() {
                 </h1>
                 <div className="flex justify-center gap-2 flex-wrap">
                   <span className="px-3 py-1 bg-cyan-100 text-cyan-700 rounded-full text-xs font-bold uppercase tracking-wide border border-cyan-200">
-                    {item.category || "General"}
+                    {item.category}
                   </span>
                   <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold uppercase tracking-wide flex items-center gap-1 border border-blue-200">
-                    <Building2 className="w-3 h-3" />{" "}
-                    {item.branch || "No Branch"}
+                    <Building2 className="w-3 h-3" /> {item.branch}
                   </span>
                 </div>
               </div>
@@ -501,7 +517,7 @@ export default function InventoryApp() {
                     <User className="w-3 h-3 text-blue-500" /> User
                   </span>
                   <span className="text-slate-700 font-semibold">
-                    {item.assignedUser || "Unassigned"}
+                    {item.assignedUser}
                   </span>
                 </div>
                 <div className="h-px bg-slate-200"></div>
@@ -510,7 +526,7 @@ export default function InventoryApp() {
                     <Calendar className="w-3 h-3 text-blue-500" /> Bought
                   </span>
                   <span className="text-slate-700 font-semibold">
-                    {formatDate(item.dateBought)}
+                    {formatDateDDMMYYYY(item.dateBought)}
                   </span>
                 </div>
                 <div className="h-px bg-slate-200"></div>
@@ -519,7 +535,7 @@ export default function InventoryApp() {
                     <Calendar className="w-3 h-3 text-blue-500" /> Recorded
                   </span>
                   <span className="text-slate-700 font-semibold">
-                    {item.dateRecorded ? formatDate(item.dateRecorded) : "N/A"}
+                    {formatDateDDMMYYYY(item.dateRecorded)}
                   </span>
                 </div>
               </div>
@@ -528,14 +544,12 @@ export default function InventoryApp() {
                 <div
                   className={`absolute top-0 left-0 w-full h-1 ${headerGradient}`}
                 ></div>
-                {/* Low Stock Indicator Removed as requested */}
                 <span className="text-slate-400 text-xs font-black uppercase tracking-widest mb-2">
                   Quantity
                 </span>
                 <span className="text-7xl font-black mb-4 text-slate-800">
                   {item.quantity}
                 </span>
-
                 {isAdmin ? (
                   <div className="flex items-center gap-4 w-full max-w-[200px]">
                     <button
@@ -577,61 +591,6 @@ export default function InventoryApp() {
             </div>
           )}
         </div>
-
-        {/* LOGIN MODAL (SCANNED VIEW) */}
-        {isLoginModalOpen && (
-          <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs overflow-hidden p-1">
-              <div className="bg-gradient-to-r from-cyan-500 to-blue-600 p-6 rounded-t-[20px] text-white flex justify-between items-center">
-                <h3 className="font-bold flex items-center gap-2">
-                  <Lock className="w-5 h-5 text-white" /> Admin Login
-                </h3>
-                <button
-                  onClick={() => setIsLoginModalOpen(false)}
-                  className="opacity-70 hover:opacity-100"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <form onSubmit={handleLogin} className="p-6">
-                <div className="mb-4">
-                  <label className="block text-xs font-bold text-slate-400 mb-1 uppercase">
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-cyan-500 focus:bg-white outline-none font-medium transition-all text-slate-800"
-                    value={usernameInput}
-                    onChange={(e) => setUsernameInput(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <div className="mb-6">
-                  <label className="block text-xs font-bold text-slate-400 mb-1 uppercase">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-cyan-500 focus:bg-white outline-none font-medium transition-all text-slate-800"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                  />
-                  {loginError && (
-                    <p className="text-rose-600 text-xs font-bold mt-2 text-center bg-rose-50 p-2 rounded-lg">
-                      {loginError}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="submit"
-                  className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-cyan-200 transition-all active:scale-95"
-                >
-                  Unlock Access
-                </button>
-              </form>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -670,7 +629,6 @@ export default function InventoryApp() {
               </div>
               PHG Inventory
             </h1>
-
             <div className="flex gap-3">
               {isAdmin ? (
                 <button
@@ -687,7 +645,6 @@ export default function InventoryApp() {
                   <Lock className="w-4 h-4" /> Admin Login
                 </button>
               )}
-
               {isAdmin && (
                 <button
                   onClick={openAddModal}
@@ -710,7 +667,6 @@ export default function InventoryApp() {
                 onChange={(e) => setFilter(e.target.value)}
               />
             </div>
-
             <div className="md:col-span-4 flex gap-2">
               <select
                 className="w-1/2 bg-white/10 border-2 border-white/20 text-white text-xs rounded-2xl px-3 py-3 outline-none focus:bg-white/20 cursor-pointer font-bold"
@@ -741,7 +697,6 @@ export default function InventoryApp() {
                 ))}
               </select>
             </div>
-
             <div className="md:col-span-2 flex bg-white/10 p-1 rounded-2xl border-2 border-white/20">
               <button
                 onClick={() => setViewMode("list")}
@@ -765,7 +720,6 @@ export default function InventoryApp() {
               </button>
             </div>
           </div>
-
           {(branchFilter || categoryFilter || filter) && (
             <div className="mt-3 flex justify-end">
               <button
@@ -824,11 +778,10 @@ export default function InventoryApp() {
         )}
       </main>
 
-      {/* Add/Edit Item Modal */}
+      {/* Add Item Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-            {/* Header with Blue/Red touch */}
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-blue-50 to-red-50">
               <h3 className="font-black text-xl text-slate-800 flex items-center gap-2">
                 <Package className="w-6 h-6 text-blue-600" />{" "}
@@ -980,55 +933,44 @@ export default function InventoryApp() {
                 </div>
               </div>
 
-              {/* Image Upload Area with Change/Delete */}
-              <div>
-                <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wide">
-                  Item Picture
-                </label>
-                <div className="border-2 border-dashed border-slate-200 rounded-2xl p-4 text-center hover:bg-blue-50 hover:border-blue-300 transition-all relative group">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                  />
-
-                  {newItem.image ? (
-                    <div className="flex flex-col items-center relative z-20">
-                      <div className="relative">
-                        <img
-                          src={newItem.image}
-                          alt="Preview"
-                          className="h-32 object-contain rounded-lg shadow-sm border border-slate-100 bg-white"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setNewItem({ ...newItem, image: "" });
-                          }}
-                          className="absolute -top-2 -right-2 bg-red-500 text-white p-1.5 rounded-full shadow-md hover:bg-red-600 transition-colors z-30"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <span className="text-xs text-blue-500 font-bold mt-2">
-                        Tap image to change
-                      </span>
+              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-4 text-center hover:bg-blue-50 hover:border-blue-300 transition-all relative group">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                />
+                {newItem.image ? (
+                  <div className="flex flex-col items-center relative z-20">
+                    <div className="relative">
+                      <img
+                        src={newItem.image}
+                        alt="Preview"
+                        className="h-32 object-contain rounded-lg shadow-sm border border-slate-100 bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setNewItem({ ...newItem, image: "" });
+                        }}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white p-1.5 rounded-full shadow-md hover:bg-red-600 transition-colors z-30"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center text-slate-400 group-hover:text-blue-500 transition-colors py-4">
-                      <Camera className="w-10 h-10 mb-2 opacity-50" />
-                      <span className="text-xs font-bold">
-                        Tap to Add Photo
-                      </span>
-                    </div>
-                  )}
-                </div>
+                    <span className="text-xs text-blue-500 font-bold mt-2">
+                      Tap image to change
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center text-slate-400 group-hover:text-blue-500 transition-colors py-4">
+                    <Camera className="w-10 h-10 mb-2 opacity-50" />
+                    <span className="text-xs font-bold">Tap to Add Photo</span>
+                  </div>
+                )}
               </div>
 
-              {/* Gradient Button with Blue/Red touch */}
               <button
                 type="submit"
                 className="w-full bg-gradient-to-r from-blue-600 to-red-500 text-white py-4 rounded-2xl font-bold hover:shadow-xl hover:scale-[1.02] transition-all active:scale-95 shadow-lg shadow-blue-200"
@@ -1040,12 +982,11 @@ export default function InventoryApp() {
         </div>
       )}
 
-      {/* LOGIN MODAL - RE-ADDED TO DASHBOARD */}
+      {/* LOGIN MODAL */}
       {isLoginModalOpen && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs overflow-hidden p-1">
-            {/* Header Gradient Blue -> Red */}
-            <div className="bg-gradient-to-r from-blue-600 to-red-500 p-6 rounded-t-[20px] text-white flex justify-between items-center">
+            <div className="bg-gradient-to-r from-cyan-500 to-blue-600 p-6 rounded-t-[20px] text-white flex justify-between items-center">
               <h3 className="font-bold flex items-center gap-2">
                 <Lock className="w-5 h-5 text-white" /> Admin Login
               </h3>
@@ -1063,7 +1004,7 @@ export default function InventoryApp() {
                 </label>
                 <input
                   type="text"
-                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-blue-500 focus:bg-white outline-none font-medium transition-all text-slate-800"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-cyan-500 focus:bg-white outline-none font-medium transition-all text-slate-800"
                   value={usernameInput}
                   onChange={(e) => setUsernameInput(e.target.value)}
                   autoFocus
@@ -1075,7 +1016,7 @@ export default function InventoryApp() {
                 </label>
                 <input
                   type="password"
-                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-blue-500 focus:bg-white outline-none font-medium transition-all text-slate-800"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-cyan-500 focus:bg-white outline-none font-medium transition-all text-slate-800"
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                 />
@@ -1118,7 +1059,6 @@ export default function InventoryApp() {
                 <Box className="w-4 h-4" /> {selectedDetailItem.category}
               </p>
             </div>
-
             <div className="p-6 overflow-y-auto">
               <div className="flex gap-2 mb-6">
                 <div className="flex-1 bg-slate-50 p-3 rounded-2xl border border-slate-100 text-center">
@@ -1138,7 +1078,6 @@ export default function InventoryApp() {
                   </div>
                 </div>
               </div>
-
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
                   <div className="bg-blue-50 p-3 rounded-xl text-blue-600">
@@ -1167,7 +1106,6 @@ export default function InventoryApp() {
                   </div>
                 </div>
               </div>
-
               {selectedDetailItem.image && (
                 <div className="mt-6">
                   <div
@@ -1186,7 +1124,6 @@ export default function InventoryApp() {
                 </div>
               )}
             </div>
-
             <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-3">
               {isAdmin && (
                 <>
@@ -1221,7 +1158,7 @@ export default function InventoryApp() {
         </div>
       )}
 
-      {/* FULLSCREEN IMAGE ZOOM */}
+      {/* IMAGE ZOOM MODAL */}
       {isImageZoomOpen && selectedDetailItem?.image && (
         <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-in fade-in duration-200">
           <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50">
@@ -1262,7 +1199,7 @@ export default function InventoryApp() {
         </div>
       )}
 
-      {/* QR Code Modal */}
+      {/* QR CODE MODAL */}
       {selectedQRItem && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-sm overflow-hidden text-center">
@@ -1326,10 +1263,7 @@ function InventoryItem({
   onQRClick,
   onClick,
 }) {
-  // Low Stock indicator removed
   const gradient = getRandomGradient(item.id);
-
-  // Updated to use the consistent robust formatting logic
   const formatDateItem = (dateString) => {
     if (!dateString) return "";
     const parts = dateString.split("-");
@@ -1337,11 +1271,7 @@ function InventoryItem({
       const [year, month, day] = parts;
       return `${day}/${month}/${year}`;
     }
-    const date = new Date(dateString);
-    const d = String(date.getDate()).padStart(2, "0");
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const y = date.getFullYear();
-    return `${d}/${m}/${y}`;
+    return "";
   };
 
   if (viewMode === "grid") {
@@ -1353,11 +1283,9 @@ function InventoryItem({
         <div className={`h-2 w-full ${gradient}`}></div>
         <div className="p-5 flex-1 relative">
           <div className="flex justify-between items-start mb-3">
-            {/* Quantity Badge Top Left */}
             <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-md uppercase tracking-wider">
               {item.category}
             </span>
-
             {isAdmin && (
               <div className="flex gap-1">
                 <button
@@ -1419,13 +1347,11 @@ function InventoryItem({
     );
   }
 
-  // List View
   return (
     <div
       onClick={onClick}
       className="group bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-200 cursor-pointer"
     >
-      {/* Thumbnail */}
       <div
         className={`w-16 h-16 shrink-0 rounded-xl overflow-hidden relative shadow-inner ${
           !item.image && gradient
@@ -1503,3 +1429,5 @@ function InventoryItem({
     </div>
   );
 }
+
+export default InventoryApp;
